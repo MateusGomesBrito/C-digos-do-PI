@@ -1,0 +1,77 @@
+import pandas as pd
+import numpy as np
+from sklearn.preprocessing import MinMaxScaler
+from tensorflow.keras.models import Sequential # type: ignore
+from tensorflow. keras. layers import LSTM, Dense # type: ignore
+import matplotlib.pyplot as plt
+
+#leitura e preparacao dos dados
+df = pd.read_excel ("Pastal.xlsx")
+df ['data_hora'] = pd.to_datetime (df ['data_hora' ])
+df.set_index ('data_hora', inplace=True)
+data = df [ ['temperatura' , 'umidade' , 'pressao' ]] . copy ()
+scaler = MinMaxScaler ()
+data_scaled = scaler.fit_transform(data)
+
+#criacao das sequencias temporais
+def create_sequences (data, window_size, indice_var):
+    X, y = [], []
+    for i in range (len (data) - window_size):
+        X.append (data[i:i+window_size])
+        y.append(data[i+window_size] [indice_var])
+    return np.array (X) , np.array (y)
+
+
+#funcao principal
+def treinamento_validacao_LSTM(nome_VAR, indice_var) :
+    print(f"\nTreinando e prevendo: {nome_VAR} ")
+    window_size = 10
+    X, y = create_sequences (data_scaled, window_size, indice_var)
+
+    #75% treino / 25% teste
+    split_index = int (len (X) * 0.75)
+    X_train, y_train = X[ : split_index], y[ : split_index]
+    X_test, y_test = X[split_index:], y[split_index: ]
+
+    #modelo LSTM
+    model = Sequential ()
+    model.add(LSTM(50, activation='relu', input_shape=(X_train. shape[1], X_train.shape [2]) ) )
+    model.add (Dense (1))
+    model.compile (optimizer='adam', loss='mse')
+    model.fit (X_train, y_train, epochs=20, batch_size=32, verbose=0)
+
+    #previsao e inversao da normalizacao
+    y_pred_scaled = model.predict (X_test)
+    y_test_full = np.zeros((len(y_test), 3))
+    y_pred_full = np.zeros ((len(y_pred_scaled), 3))
+    y_test_full[:, indice_var] = y_test
+    y_pred_full[:, indice_var] = y_pred_scaled[:, 0]
+    y_test_inv = scaler. inverse_transform(y_test_full) [:, indice_var]
+    y_pred_inv = scaler. inverse_transform(y_pred_full) [:, indice_var]
+
+    #serie original completa
+    data_scaled_full = scaler.transform(data)
+    serie_real = scaler.inverse_transform(data_scaled_full) [:, indice_var]
+
+    #previsao + serie
+    predicoes_alinhadas = np.empty_like(serie_real)
+    predicoes_alinhadas [: ] = np.nan
+    inicio_pred = len (serie_real) - len (y_pred_inv)
+    predicoes_alinhadas [inicio_pred: ] = y_pred_inv
+
+    #graficos
+    plt.figure (figsize=(14, 5))
+    plt.plot (serie_real, label=f' {nome_VAR} real (100%) ', color='blue')
+    plt.plot (predicoes_alinhadas, label=f' {nome_VAR} prevista (25%) ', color='red', linestyle=' -- ')
+    plt.title (f'Previsao com LSTM - {nome_VAR} ' )
+    plt.xlabel ('Instante')
+    plt.ylabel (nome_VAR.capitalize ())
+    plt.legend ()
+    plt.grid (True)
+    plt.tight_layout ()
+    plt.show ()
+
+#executa para cada var
+treinamento_validacao_LSTM("temperatura", 0)
+treinamento_validacao_LSTM("umidade", 1)
+treinamento_validacao_LSTM("pressao", 2)
