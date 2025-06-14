@@ -1,0 +1,129 @@
+#include <Wire.h>
+#include <Adafruit_Sensor.h>
+#include <Adafruit_BME280.h>
+#include <Firebase_ESP_Client.h>
+#include <WiFi.h>
+#include <time.h>
+
+// Configuração da rede Wi-Fi
+const char* ssid = "******";
+const char* password = "********";
+
+// Configuração do NTP (Horário)
+const char* ntpServer = "pool.ntp.org";
+const long gmtOffset_sec = -3 * 3600;
+const int daylightOffset_sec = 0;
+
+// Configuração do Firebase
+#define API_KEY "AIzaSyDgpnxz7ZE-rqE3OOfWt6RphYPcC6fa8B8"
+#define DATABASE_URL "aed-iot-default-rtdb.firebaseio.com"
+
+// Credenciais do Firebase
+#define USER_EMAIL "***********@gmail.com"
+#define USER_PASSWORD "*************"
+
+// Objetos do Firebase
+FirebaseData fbdo;
+FirebaseAuth auth;
+FirebaseConfig config;
+
+// Objeto do sensor BME280
+Adafruit_BME280 bme;
+
+void setup() {
+  Serial.begin(9600);
+  delay(1000);
+
+  // Conectar ao Wi-Fi
+  WiFi.begin(ssid, password);
+  Serial.print("Conectando ao Wi-Fi");
+  while (WiFi.status() != WL_CONNECTED) {
+    delay(500);
+    Serial.print(".");
+  }
+  Serial.println("\nWi-Fi conectado!");
+
+  // Configurar NTP
+  configTime(gmtOffset_sec, daylightOffset_sec, ntpServer);
+  struct tm timeinfo;
+  if (!getLocalTime(&timeinfo)) {
+    Serial.println("Erro ao obter hora NTP.");
+  } else {
+    Serial.println("Hora NTP sincronizada.");
+  }
+
+  // Inicializar sensor BME280
+  if (!bme.begin(0x76)) {
+    Serial.println("Sensor BME280 não encontrado!");
+    while (1);
+  }
+  Serial.println("Sensor BME280 inicializado com sucesso.");
+
+  // Configurar Firebase
+  config.api_key = API_KEY;
+  config.database_url = DATABASE_URL;
+
+  auth.user.email = USER_EMAIL;
+  auth.user.password = USER_PASSWORD;
+
+  Firebase.begin(&config, &auth);
+  Firebase.reconnectWiFi(true);
+}
+
+void loop() {
+  // Obter hora atual
+  struct tm timeinfo;
+  char buffer[20] = "00/00/0000 00:00:00";
+
+  if (getLocalTime(&timeinfo)) {
+    strftime(buffer, sizeof(buffer), "%d/%m/%Y %H:%M:%S", &timeinfo);
+    Serial.print("Data/Hora: ");
+    Serial.println(buffer);
+  } else {
+    Serial.println("Erro ao ler hora local.");
+  }
+
+  // Ler dados do sensor
+  float temperatura = bme.readTemperature();
+  float pressao = bme.readPressure() / 100.0F;  // Convertendo para hPa
+  float umidade = bme.readHumidity();
+
+  // Exibir no monitor serial
+  Serial.print("Temperatura: ");
+  Serial.print(temperatura);
+  Serial.println(" °C");
+
+  Serial.print("Pressão: ");
+  Serial.print(pressao);
+  Serial.println(" hPa");
+
+  if (!isnan(umidade)) {
+    Serial.print("Umidade: ");
+    Serial.print(umidade);
+    Serial.println(" %");
+  } else {
+    Serial.println("Sensor não mede umidade (provavelmente é um BMP280).");
+  }
+
+  // Enviar dados ao Firebase
+  if (Firebase.ready()) {
+    String caminho = "/leituras";
+    FirebaseJson json;
+
+    json.set("data_hora", buffer);
+    json.set("temperatura", temperatura);
+    json.set("pressao", pressao);
+    json.set("umidade", umidade);
+
+    if (Firebase.RTDB.pushJSON(&fbdo, caminho.c_str(), &json)) {
+      Serial.println("Dados enviados com sucesso.");
+    } else {
+      Serial.print("Erro ao enviar: ");
+      Serial.println(fbdo.errorReason());
+    }
+  } else {
+    Serial.println("Firebase não está pronto.");
+  }
+
+  delay(20000);// Aguarda 20 segundos antes de uma nova leitura
+}
